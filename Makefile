@@ -10,13 +10,14 @@ SCRIPT = kchangelog
 # Rutas de Systemd del usuario
 SYSTEMD_USER_DIR = $(HOME)/.config/systemd/user
 
-.PHONY: all install install-script install-service uninstall uninstall-script uninstall-service check-flags help
+.PHONY: all install install-script install-service uninstall uninstall-script uninstall-service check-flags test-notify help
 
 all: help
 
 help:
 	@echo "Opciones disponibles en el Makefile:"
 	@echo "  make check-flags       - Verifica que el script y sus flags esenciales funcionen correctamente"
+	@echo "  make test-notify       - Envía una notificación de prueba para verificar la integración visual"
 	@echo "  make install           - Instala el script (requiere sudo) y configura el servicio systemd del usuario"
 	@echo "  make install-script    - Instala únicamente el script en $(BINDIR) (suele requerir sudo)"
 	@echo "  make install-service   - Instala únicamente el servicio systemd y el timer para el usuario actual"
@@ -31,6 +32,27 @@ check-flags:
 	@bash ./$(SCRIPT) --help > /dev/null || (echo "Error: La flag --help no está funcional" && exit 1)
 	@bash ./$(SCRIPT) --list-subs > /dev/null || (echo "Error: La flag --list-subs no está funcional" && exit 1)
 	@echo "✓ Todas las flags se verificaron y están 100% funcionales."
+
+# 2. Prueba de notificaciones de escritorio
+test-notify:
+	@echo "Probando sistema de notificaciones de kchangelog..."
+	@if command -v notify-send > /dev/null; then \
+		echo "Enviando notificación de prueba..."; \
+		DISPLAY="$${DISPLAY:-:0}" \
+		DBUS_SESSION_BUS_ADDRESS="$${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$$(id -u)/bus}" \
+		notify-send \
+			--urgency=normal \
+			--icon=system-software-update \
+			--app-name="kchangelog" \
+			"kchangelog — Notificación de Prueba" \
+			"¡Excelente! Tu entorno de escritorio recibe notificaciones de kchangelog de forma correcta."; \
+		echo "✓ Notificación enviada con éxito."; \
+		echo "Si no ves la alerta emergente, verifica que tu entorno de escritorio no esté en modo 'No Molestar'."; \
+	else \
+		echo "✗ Error: El comando 'notify-send' (libnotify-bin) no está instalado en el sistema."; \
+		echo "Instálalo ejecutando: sudo apt install libnotify-bin"; \
+		exit 1; \
+	fi
 
 # 2. Instalación del Script
 install-script: check-flags
