@@ -1,0 +1,16 @@
+# Archivos temporales y del sistema
+.DS_Store
+*~
+*.swp
+*.tmp
+
+# Carpetas de desarrollo y pruebas locales
+test_install/
+
+# IDEs y Editores de código
+.vscode/
+.idea/
+.cursor/
+.windsurf/
+.project
+.settings/

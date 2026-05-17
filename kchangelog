@@ -1,0 +1,424 @@
+#!/usr/bin/env bash
+# kchangelog — monitor de changelogs del kernel Ubuntu con notificaciones Cinnamon
+#
+# INSTALACIÓN:
+#   sudo cp kchangelog /usr/local/bin/
+#   sudo chmod +x /usr/local/bin/kchangelog
+#   kchangelog --install-service    # instala el timer systemd para el usuario
+#
+# USO:
+#   kchangelog                      # changelog del kernel activo
+#   kchangelog 6.8                  # versión específica (major.minor)
+#   kchangelog 6.17.0-23            # versión exacta
+#   kchangelog --cve                # solo entradas con CVEs
+#   kchangelog --last N             # últimas N entradas
+#   kchangelog --diff               # diff contra última lectura guardada
+#   kchangelog --open               # abrir en $PAGER
+#   kchangelog --subscribe active   # suscribirse al kernel activo
+#   kchangelog --subscribe 6.8      # suscribirse a versión específica
+#   kchangelog --unsubscribe 6.8    # desuscribirse
+#   kchangelog --list-subs          # ver suscripciones activas
+#   kchangelog --check              # chequear todas las suscripciones (timer)
+#   kchangelog --install-service    # instalar timer systemd (cada 6h)
+#   kchangelog --remove-service     # desinstalar timer
+
+set -euo pipefail
+
+# --- Configuración ---
+CHANGELOG_BASE="https://changelogs.ubuntu.com/changelogs/pool/main/l"
+TMPDIR_BASE="/tmp/kchangelog"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/kchangelog"
+SUBS_FILE="${CONFIG_DIR}/subscriptions"
+SEEN_DIR="${CONFIG_DIR}/seen"
+SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
+
+mkdir -p "$TMPDIR_BASE" "$CONFIG_DIR" "$SEEN_DIR"
+
+# --- Helpers ---
+info()    { echo "→ $*" >&2; }
+success() { echo "✓ $*" >&2; }
+err()     { echo "✗ $*" >&2; }
+
+notify() {
+    local title="$1" body="$2" urgency="${3:-normal}"
+    if command -v notify-send &>/dev/null; then
+        DISPLAY="${DISPLAY:-:0}" \
+        DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}" \
+        notify-send \
+            --urgency="$urgency" \
+            --icon=system-software-update \
+            --app-name="kchangelog" \
+            "$title" "$body"
+    fi
+}
+
+usage() {
+    cat <<'EOF'
+kchangelog — monitor de changelogs del kernel Ubuntu
+
+LECTURA:
+  kchangelog                    Kernel activo
+  kchangelog 6.8                Versión específica (major.minor)
+  kchangelog 6.17.0-23          Versión exacta
+  kchangelog --cve              Solo entradas con CVEs
+  kchangelog --last N           Últimas N entradas
+  kchangelog --diff             Diff contra última lectura guardada
+  kchangelog --open             Abrir en $PAGER
+
+SUSCRIPCIONES:
+  kchangelog --subscribe active      Kernel activo
+  kchangelog --subscribe 6.8         Versión específica
+  kchangelog --unsubscribe 6.8       Desuscribirse
+  kchangelog --list-subs             Ver suscripciones
+
+SERVICIO:
+  kchangelog --check                 Chequear ahora (usado por el timer)
+  kchangelog --install-service       Instalar timer systemd (cada 6h)
+  kchangelog --remove-service        Desinstalar timer
+
+OTRAS OPCIONES:
+  -v, --version                      Mostrar información de versión y salir
+  -h, --help                         Mostrar esta ayuda y salir
+
+EOF
+    exit 0
+}
+
+show_version() {
+    cat <<'EOF'
+kchangelog (kchangelog) 1.0.0
+Copyright (C) 2026 Iván Ezequiel Rodriguez
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute.
+There is NO WARRANTY, to the extent permitted by law.
+
+Source: https://github.com/IRodriguez13/kchangelog
+
+Escrito por Iván Ezequiel Rodriguez.
+EOF
+    exit 0
+}
+
+# --- Resolución de versión ---
+find_pkg_ver() {
+    local ver="$1"
+    local major_minor
+    major_minor=$(echo "$ver" | cut -d. -f1,2)
+
+    # Si coincide con el kernel activo, usarlo directamente
+    local active
+    active=$(uname -r)
+    if [[ "$ver" == "${active%-generic}" || "$ver" == "$active" ]]; then
+        apt-cache show "linux-image-${active}" 2>/dev/null \
+            | grep "^Version:" | head -1 | awk '{print $2}' || true
+        return
+    fi
+
+    # Buscar en paquetes disponibles para ese major.minor
+    apt-cache search "^linux-image-${major_minor}" 2>/dev/null \
+        | awk '{print $1}' \
+        | while read -r pkg; do
+            apt-cache show "$pkg" 2>/dev/null \
+                | grep "^Version:" | head -1 | awk '{print $2}'
+          done \
+        | sort -V | tail -1 || true
+}
+
+build_urls() {
+    local ver="$1" pkg_ver="$2"
+    local major_minor
+    major_minor=$(echo "$ver" | cut -d. -f1,2)
+
+    local urls=()
+    if [[ -n "$pkg_ver" ]]; then
+        urls+=(
+            "${CHANGELOG_BASE}/linux-hwe-${major_minor}/linux-hwe-${major_minor}_${pkg_ver}/changelog"
+            "${CHANGELOG_BASE}/linux/linux_${pkg_ver}/changelog"
+        )
+    fi
+    urls+=(
+        "${CHANGELOG_BASE}/linux-hwe-${major_minor}/linux-hwe-${major_minor}_${ver}/changelog"
+        "${CHANGELOG_BASE}/linux/linux_${ver}/changelog"
+    )
+    printf '%s\n' "${urls[@]}"
+}
+
+# --- Descarga ---
+download_changelog() {
+    local ver="$1"
+    local out_file="${TMPDIR_BASE}/changelog-${ver//\//_}"
+    local pkg_ver
+    pkg_ver=$(find_pkg_ver "$ver")
+
+    [[ -n "$pkg_ver" ]] && info "Versión del paquete: $pkg_ver"
+
+    while IFS= read -r url; do
+        info "Intentando: $url"
+        if curl -fsSL --max-time 20 -o "$out_file" "$url" 2>/dev/null; then
+            if ! head -1 "$out_file" | grep -qi "<!DOCTYPE\|<html"; then
+                info "Guardado en: $out_file"
+                echo "$out_file"
+                return 0
+            fi
+        fi
+    done < <(build_urls "$ver" "$pkg_ver")
+
+    err "No se pudo descargar el changelog para $ver"
+    err "Buscalo manualmente en: ${CHANGELOG_BASE}/"
+    return 1
+}
+
+# --- Filtros ---
+filter_cve() {
+    awk '
+        /^linux/ { block = $0 "\n"; next }
+        { block = block $0 "\n" }
+        /^ -- / {
+            if (block ~ /CVE-[0-9]{4}-[0-9]+/) print block
+            block = ""
+        }
+    '
+}
+
+filter_last_n() {
+    local n="$1"
+    awk -v n="$n" '
+        /^ -- / { count++ }
+        { print }
+        count >= n { exit }
+    '
+}
+
+# --- Diff ---
+do_diff() {
+    local ver="$1" out_file="$2"
+    local seen_file="${SEEN_DIR}/${ver//\//_}"
+
+    if [[ ! -f "$seen_file" ]]; then
+        info "Primera lectura de $ver — guardando como base"
+        cp "$out_file" "$seen_file"
+        cat "$out_file"
+        return
+    fi
+
+    if diff -q "$seen_file" "$out_file" &>/dev/null; then
+        success "Sin cambios desde la última lectura"
+    else
+        diff --color=always -u "$seen_file" "$out_file" || true
+        echo ""
+        read -rp "¿Actualizar base de comparación? [s/N] " resp
+        if [[ "${resp,,}" == "s" ]]; then
+            cp "$out_file" "$seen_file"
+            success "Base actualizada"
+        fi
+    fi
+}
+
+# --- Suscripciones ---
+subscribe() {
+    local ver="$1"
+    [[ "$ver" == "active" ]] && ver="$(uname -r | sed 's/-generic$//')"
+    touch "$SUBS_FILE"
+    if grep -qx "$ver" "$SUBS_FILE" 2>/dev/null; then
+        info "Ya estás suscrito a $ver"
+    else
+        echo "$ver" >> "$SUBS_FILE"
+        success "Suscrito a $ver"
+        info "Instalá el timer si no lo hiciste: kchangelog --install-service"
+    fi
+}
+
+unsubscribe() {
+    local ver="$1"
+    [[ "$ver" == "active" ]] && ver="$(uname -r | sed 's/-generic$//')"
+    if [[ ! -f "$SUBS_FILE" ]] || ! grep -qx "$ver" "$SUBS_FILE"; then
+        info "No estabas suscrito a $ver"
+        return
+    fi
+    sed -i "/^${ver//\./\\.}$/d" "$SUBS_FILE"
+    success "Desuscrito de $ver"
+}
+
+list_subs() {
+    if [[ ! -f "$SUBS_FILE" ]] || [[ ! -s "$SUBS_FILE" ]]; then
+        info "No hay suscripciones activas"
+        return
+    fi
+    echo "Suscripciones activas:"
+    while IFS= read -r ver; do
+        [[ -z "$ver" ]] && continue
+        echo "  • $ver"
+    done < "$SUBS_FILE"
+}
+
+# --- Check (usado por el timer) ---
+do_check() {
+    [[ ! -f "$SUBS_FILE" ]] && return
+
+    while IFS= read -r ver; do
+        [[ -z "$ver" ]] && continue
+        info "Chequeando $ver..."
+
+        local out_file
+        out_file=$(download_changelog "$ver") || continue
+
+        local seen_file="${SEEN_DIR}/${ver//\//_}"
+
+        if [[ ! -f "$seen_file" ]]; then
+            cp "$out_file" "$seen_file"
+            info "$ver: base guardada (primera vez)"
+            continue
+        fi
+
+        if diff -q "$seen_file" "$out_file" &>/dev/null; then
+            info "$ver: sin cambios"
+            continue
+        fi
+
+        # Detectar CVEs nuevos
+        local new_cves
+        new_cves=$(diff "$seen_file" "$out_file" \
+            | grep "^>" \
+            | grep -oP 'CVE-[0-9]{4}-[0-9]+' \
+            | sort -u || true)
+
+        # Detectar nueva entrada de versión
+        local new_entry
+        new_entry=$(diff "$seen_file" "$out_file" \
+            | grep "^> linux" | head -1 | sed 's/^> //' || true)
+
+        if [[ -n "$new_cves" ]]; then
+            local count cve_list
+            count=$(echo "$new_cves" | wc -l)
+            cve_list=$(echo "$new_cves" | tr '\n' ' ')
+            notify \
+                "Kernel $ver — $count CVE(s) nuevos" \
+                "${cve_list}\n\nCorré: kchangelog $ver --cve" \
+                "critical"
+            success "$ver: $count CVE(s) nuevos — notificación enviada"
+        elif [[ -n "$new_entry" ]]; then
+            notify \
+                "Kernel $ver — Update disponible" \
+                "$new_entry\n\nCorré: kchangelog $ver --diff" \
+                "normal"
+            success "$ver: update disponible — notificación enviada"
+        fi
+
+        cp "$out_file" "$seen_file"
+
+    done < "$SUBS_FILE"
+}
+
+# --- Servicio systemd ---
+install_service() {
+    mkdir -p "$SYSTEMD_USER_DIR"
+
+    cat > "${SYSTEMD_USER_DIR}/kchangelog.service" <<EOF
+[Unit]
+Description=kchangelog — chequeo de changelogs del kernel
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kchangelog --check
+Environment=DISPLAY=:0
+EOF
+
+    cat > "${SYSTEMD_USER_DIR}/kchangelog.timer" <<EOF
+[Unit]
+Description=kchangelog — chequeo periódico cada 6 horas
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl --user daemon-reload
+    systemctl --user enable --now kchangelog.timer
+    success "Timer instalado — chequea cada 6 horas"
+    info "Estado:   systemctl --user status kchangelog.timer"
+    info "Log:      journalctl --user -u kchangelog.service"
+}
+
+remove_service() {
+    systemctl --user disable --now kchangelog.timer 2>/dev/null || true
+    rm -f \
+        "${SYSTEMD_USER_DIR}/kchangelog.service" \
+        "${SYSTEMD_USER_DIR}/kchangelog.timer"
+    systemctl --user daemon-reload
+    success "Timer desinstalado"
+}
+
+# --- Pipeline de salida ---
+run_pipeline() {
+    local out_file="$1"
+    local content
+    content=$(cat "$out_file")
+
+    [[ $CVE_ONLY -eq 1 ]] && content=$(echo "$content" | filter_cve)
+    [[ $LAST_N -gt 0 ]]   && content=$(echo "$content" | filter_last_n "$LAST_N")
+
+    if [[ $OPEN_PAGER -eq 1 ]]; then
+        echo "$content" | ${PAGER:-less -R}
+    else
+        echo "$content"
+    fi
+}
+
+# --- Parse de argumentos ---
+CVE_ONLY=0
+LAST_N=0
+OPEN_PAGER=0
+DO_DIFF=0
+TARGET_VER=""
+ACTION="read"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --cve)             CVE_ONLY=1 ;;
+        --open)            OPEN_PAGER=1 ;;
+        --diff)            DO_DIFF=1 ;;
+        --last)            shift; LAST_N="${1:?'--last requiere un número'}" ;;
+        --subscribe)       shift; ACTION="subscribe";   TARGET_VER="${1:?'falta versión'}" ;;
+        --unsubscribe)     shift; ACTION="unsubscribe"; TARGET_VER="${1:?'falta versión'}" ;;
+        --list-subs)       ACTION="list-subs" ;;
+        --check)           ACTION="check" ;;
+        --install-service) ACTION="install-service" ;;
+        --remove-service)  ACTION="remove-service" ;;
+        -h|--help)         usage ;;
+        -v|--version)      show_version ;;
+        -*)                err "Opción desconocida: $1"; exit 1 ;;
+        *)                 TARGET_VER="$1" ;;
+    esac
+    shift
+done
+
+# --- Dispatch ---
+case "$ACTION" in
+    subscribe)       subscribe "$TARGET_VER";   exit 0 ;;
+    unsubscribe)     unsubscribe "$TARGET_VER"; exit 0 ;;
+    list-subs)       list_subs;                 exit 0 ;;
+    check)           do_check;                  exit 0 ;;
+    install-service) install_service;           exit 0 ;;
+    remove-service)  remove_service;            exit 0 ;;
+esac
+
+# --- Lectura normal ---
+[[ -z "$TARGET_VER" ]] && TARGET_VER="$(uname -r | sed 's/-generic$//')"
+info "Kernel: $TARGET_VER"
+
+out_file=$(download_changelog "$TARGET_VER")
+
+if [[ $DO_DIFF -eq 1 ]]; then
+    do_diff "$TARGET_VER" "$out_file"
+    exit 0
+fi
+
+run_pipeline "$out_file"
+
+# Actualizar seen en lectura normal
+cp "$out_file" "${SEEN_DIR}/${TARGET_VER//\//_}"

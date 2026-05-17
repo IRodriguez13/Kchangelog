@@ -1,0 +1,95 @@
+# Makefile para kchangelog — monitor de changelogs del kernel Ubuntu
+# Autor: Iván Ezequiel Rodriguez
+# https://github.com/IRodriguez13/kchangelog
+
+# Variables de configuración
+PREFIX ?= /usr/local
+BINDIR = $(PREFIX)/bin
+SCRIPT = kchangelog
+
+# Rutas de Systemd del usuario
+SYSTEMD_USER_DIR = $(HOME)/.config/systemd/user
+
+.PHONY: all install install-script install-service uninstall uninstall-script uninstall-service check-flags help
+
+all: help
+
+help:
+	@echo "Opciones disponibles en el Makefile:"
+	@echo "  make check-flags       - Verifica que el script y sus flags esenciales funcionen correctamente"
+	@echo "  make install           - Instala el script (requiere sudo) y configura el servicio systemd del usuario"
+	@echo "  make install-script    - Instala únicamente el script en $(BINDIR) (suele requerir sudo)"
+	@echo "  make install-service   - Instala únicamente el servicio systemd y el timer para el usuario actual"
+	@echo "  make uninstall         - Elimina por completo el script y el servicio systemd"
+	@echo "  make uninstall-script  - Desinstala únicamente el script de $(BINDIR)"
+	@echo "  make uninstall-service - Desinstala y limpia el servicio systemd y el timer"
+
+# 1. Verificación de flags funcionales
+check-flags:
+	@echo "Verificando el correcto funcionamiento de las flags de kchangelog..."
+	@bash ./$(SCRIPT) --version > /dev/null || (echo "Error: La flag --version no está funcional" && exit 1)
+	@bash ./$(SCRIPT) --help > /dev/null || (echo "Error: La flag --help no está funcional" && exit 1)
+	@bash ./$(SCRIPT) --list-subs > /dev/null || (echo "Error: La flag --list-subs no está funcional" && exit 1)
+	@echo "✓ Todas las flags se verificaron y están 100% funcionales."
+
+# 2. Instalación del Script
+install-script: check-flags
+	@echo "Instalando script en $(DESTDIR)$(BINDIR)..."
+	mkdir -p $(DESTDIR)$(BINDIR)
+	cp $(SCRIPT) $(DESTDIR)$(BINDIR)/$(SCRIPT)
+	chmod 755 $(DESTDIR)$(BINDIR)/$(SCRIPT)
+	@echo "✓ Script kchangelog instalado correctamente en $(DESTDIR)$(BINDIR)/$(SCRIPT)."
+
+# 3. Instalación del Servicio Systemd
+install-service:
+	@echo "Instalando el servicio y timer systemd para el usuario actual..."
+	@if [ -f "$(DESTDIR)$(BINDIR)/$(SCRIPT)" ]; then \
+		"$(DESTDIR)$(BINDIR)/$(SCRIPT)" --install-service; \
+	elif [ -f "./$(SCRIPT)" ]; then \
+		./$(SCRIPT) --install-service; \
+	else \
+		echo "Error: No se encontró el ejecutable kchangelog en $(DESTDIR)$(BINDIR) ni en el directorio actual."; \
+		exit 1; \
+	fi
+
+# 4. Instalación completa (Script + Servicio)
+install: install-script
+	@echo "Configurando servicio systemd..."
+	@if [ "$$(id -u)" -eq 0 ]; then \
+		if [ -n "$$SUDO_USER" ]; then \
+			echo "Detectado uso de sudo. Instalando el servicio para el usuario: $$SUDO_USER..."; \
+			sudo -u $$SUDO_USER DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$$(id -u $$SUDO_USER)/bus "$(DESTDIR)$(BINDIR)/$(SCRIPT)" --install-service || \
+			sudo -u $$SUDO_USER "$(DESTDIR)$(BINDIR)/$(SCRIPT)" --install-service; \
+		else \
+			echo "ADVERTENCIA: Ejecutando como root pero no se detectó la variable SUDO_USER."; \
+			echo "El servicio systemd se instalará para el usuario root."; \
+			"$(DESTDIR)$(BINDIR)/$(SCRIPT)" --install-service; \
+		fi \
+	else \
+		"$(DESTDIR)$(BINDIR)/$(SCRIPT)" --install-service; \
+	fi
+	@echo "✓ Instalación completa finalizada con éxito."
+
+# 5. Desinstalación del Script
+uninstall-script:
+	@echo "Eliminando script de $(DESTDIR)$(BINDIR)..."
+	rm -f $(DESTDIR)$(BINDIR)/$(SCRIPT)
+	@echo "✓ Script desinstalado de $(DESTDIR)$(BINDIR)/$(SCRIPT)."
+
+# 6. Desinstalación del Servicio Systemd
+uninstall-service:
+	@echo "Removiendo el servicio y timer systemd..."
+	@if [ -x "$(DESTDIR)$(BINDIR)/$(SCRIPT)" ]; then \
+		"$(DESTDIR)$(BINDIR)/$(SCRIPT)" --remove-service; \
+	elif [ -x "./$(SCRIPT)" ]; then \
+		./$(SCRIPT) --remove-service; \
+	else \
+		echo "Ejecutable no encontrado. Eliminando archivos de servicio manualmente..."; \
+		rm -f $(SYSTEMD_USER_DIR)/kchangelog.service $(SYSTEMD_USER_DIR)/kchangelog.timer; \
+		systemctl --user daemon-reload 2>/dev/null || true; \
+	fi
+	@echo "✓ Servicio systemd desinstalado."
+
+# 7. Desinstalación completa (Script + Servicio)
+uninstall: uninstall-service uninstall-script
+	@echo "✓ Desinstalación completa finalizada."
