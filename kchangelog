@@ -104,6 +104,79 @@ EOF
 }
 
 # --- Resolución de versión ---
+resolve_interactive_version() {
+    local input_ver="$1"
+
+    # Si coincide con el kernel activo, usarlo directamente
+    if [[ "$input_ver" == "active" ]]; then
+        echo "$(uname -r | sed 's/-generic$//')"
+        return
+    fi
+
+    # Obtener todas las versiones limpias disponibles en el caché local
+    local all_kernels
+    all_kernels=$(apt-cache pkgnames linux-image- 2>/dev/null \
+        | grep -E '^linux-image-[0-9]' \
+        | sed -E 's/^linux-image-//; s/-(generic|dbgsym|lowlatency|aws|gcp|azure|oem|oracle|ibm|gke|unsigned)//g' \
+        | grep -E '^[0-9]' \
+        | sort -V -u)
+
+    if [[ -z "$all_kernels" ]]; then
+        # Si no hay caché, retornar el input tal cual
+        echo "$input_ver"
+        return
+    fi
+
+    # Buscar coincidencias para la familia/prefijo ingresado
+    local matches=()
+    while IFS= read -r k; do
+        [[ -z "$k" ]] && continue
+        if [[ "$k" == "$input_ver" ]] || [[ "$k" == "$input_ver".* ]] || [[ "$k" == "$input_ver"-* ]]; then
+            matches+=("$k")
+        fi
+    done <<< "$all_kernels"
+
+    local num_matches=${#matches[@]}
+
+    if [[ $num_matches -eq 0 ]]; then
+        # Ninguna coincidencia, devolver el valor del input
+        echo "$input_ver"
+        return
+    fi
+
+    if [[ $num_matches -eq 1 ]]; then
+        # Exactamente una coincidencia
+        echo "${matches[0]}"
+        return
+    fi
+
+    # Múltiples coincidencias: preguntar de forma interactiva si es una TTY y no estamos en modo JSON
+    if [[ -t 0 && -t 1 && $JSON_OUTPUT -eq 0 ]]; then
+        echo "Múltiples versiones encontradas para la familia '$input_ver':" >&2
+        local i=1
+        for match in "${matches[@]}"; do
+            echo "  $i) $match" >&2
+            ((i++))
+        done
+        echo "  a) Todas (suscribirse/monitorear todas)" >&2
+
+        local choice
+        while true; do
+            read -rp "Selecciona una opción (1-$num_matches o 'a'): " choice < /dev/tty
+            if [[ "$choice" == "a" ]]; then
+                echo "${matches[@]}"
+                return
+            elif [[ "$choice" =~ ^[0-9]+$ ]] && [[ $choice -ge 1 && $choice -le $num_matches ]]; then
+                echo "${matches[choice-1]}"
+                return
+            fi
+        done
+    else
+        # No interactivo o modo JSON, usar la más reciente
+        echo "${matches[-1]}"
+    fi
+}
+
 find_pkg_ver() {
     local ver="$1"
     local major_minor
@@ -607,8 +680,22 @@ fi
 
 # --- Dispatch ---
 case "$ACTION" in
-    subscribe)       subscribe "$TARGET_VER";   exit 0 ;;
-    unsubscribe)     unsubscribe "$TARGET_VER"; exit 0 ;;
+    subscribe)
+        resolved_versions=$(resolve_interactive_version "$TARGET_VER")
+        read -r -a ver_array <<< "$resolved_versions"
+        for v in "${ver_array[@]}"; do
+            subscribe "$v"
+        done
+        exit 0
+        ;;
+    unsubscribe)
+        resolved_versions=$(resolve_interactive_version "$TARGET_VER")
+        read -r -a ver_array <<< "$resolved_versions"
+        for v in "${ver_array[@]}"; do
+            unsubscribe "$v"
+        done
+        exit 0
+        ;;
     list-subs)       list_subs;                 exit 0 ;;
     check)           do_check;                  exit 0 ;;
     install-service) install_service;           exit 0 ;;
@@ -617,17 +704,20 @@ case "$ACTION" in
 esac
 
 # --- Lectura normal ---
-[[ -z "$TARGET_VER" ]] && TARGET_VER="$(uname -r | sed 's/-generic$//')"
-info "Kernel: $TARGET_VER"
+[[ -z "$TARGET_VER" ]] && TARGET_VER="active"
+resolved_versions=$(resolve_interactive_version "$TARGET_VER")
+read -r -a ver_array <<< "$resolved_versions"
 
-out_file=$(download_changelog "$TARGET_VER")
+for v in "${ver_array[@]}"; do
+    info "Kernel: $v"
+    out_file=$(download_changelog "$v")
 
-if [[ $DO_DIFF -eq 1 ]]; then
-    do_diff "$TARGET_VER" "$out_file"
-    exit 0
-fi
+    if [[ $DO_DIFF -eq 1 ]]; then
+        do_diff "$v" "$out_file"
+    else
+        run_pipeline "$out_file"
+    fi
 
-run_pipeline "$out_file"
-
-# Actualizar seen en lectura normal
-cp "$out_file" "${SEEN_DIR}/${TARGET_VER//\//_}"
+    # Actualizar seen en lectura normal
+    cp "$out_file" "${SEEN_DIR}/${v//\//_}"
+done

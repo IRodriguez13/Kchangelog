@@ -42,4 +42,4 @@ _kchangelog() {
         return 0
     fi
 }
-complete -F _kchangelog kchangelog
+complete -F _kchangelog kchangelog ./kchangelog

@@ -1,4 +1,4 @@
-#compdef kchangelog
+#compdef kchangelog ./kchangelog
 
 _kchangelog() {
     local -a opts
