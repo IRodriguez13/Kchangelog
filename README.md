@@ -22,6 +22,9 @@ Although originally tested on Cinnamon, `kchangelog` uses the universal `notify-
 
 ## Features
 
+*   **Vibrant Colorization:** Highlighting of key changelog elements in the terminal (cyan package headers, dim gray signatures, bold red CVEs, and colored urgency levels). Bypasses escape codes when piping to logs or scripts.
+*   **Keyword Grep Filtering:** Filter changelog entry blocks interactively by any pattern or keyword (`--grep PATTERN`).
+*   **Debian-to-JSON Parser:** Directly translate raw changelogs into a structured, clean JSON array of objects (`--json`) perfect for integration or parsing.
 *   **Changelog Fetching:** Downloads changelogs directly from Ubuntu's primary sources.
 *   **Smart Resolution:** Automatically translates short kernel versions (e.g., `6.8` or active kernel) to exact package release versions via `apt-cache`.
 *   **Granular Filters:** Filter by security vulnerabilities (`--cve`) or limit entries (`--last N`).
@@ -29,7 +32,7 @@ Although originally tested on Cinnamon, `kchangelog` uses the universal `notify-
 *   **Kernel Version Listing:** Instantly retrieve, clean, and format all available kernel package versions in the local cache (`--list-available`).
 *   **Subscription System:** Subscribe to multiple kernel releases (e.g., LTS kernels or active running kernels).
 *   **Systemd Integration:** Seamless background scheduling via systemd user timers (running every 6 hours by default) with custom DBus environment mapping for reliable notifications.
-*   **Interactive Autocompletion:** Provides tab-completion in Bash for all commands, options, and dynamically suggests available kernel versions.
+*   **Universal Autocompletion:** Native autocompletion scripts for **Bash**, **Zsh**, and **Fish** supporting all options and dynamic kernel package suggestion.
 *   **Professional Manpage:** Complete UNIX standard manual page (`man kchangelog`) explaining all commands, configuration files, and options.
 
 ---
@@ -48,9 +51,9 @@ Although originally tested on Cinnamon, `kchangelog` uses the universal `notify-
 
 We provide a comprehensive `Makefile` to handle script validation, installation, shell completion configuration, manpage registration, and service deployment.
 
-### 1. Complete Installation (Script + Shell Completion + Manpage + Systemd Service)
+### 1. Complete Installation (Script + Universal Shell Completions + Manpage + Systemd Service)
 
-Installs the executable globally, registers the bash autocompleter, installs the manpage, and automatically registers/enables the user timer service:
+Installs the executable globally, registers native autocompleters for **Bash**, **Zsh**, and **Fish**, installs the manual page, and automatically registers/enables the user timer service:
 ```bash
 sudo make install
 ```
@@ -115,6 +118,16 @@ kchangelog --open
 # List all available kernel package versions in multiple columns
 kchangelog --list-available
 
+# Filter entries containing the keyword "intel" (case-insensitive)
+kchangelog --grep "intel"
+
+# Output structured JSON of the last 3 entries
+kchangelog --json --last 3
+
+# Force enable or disable colorized terminal formatting
+kchangelog --color=always
+kchangelog --color=never
+
 # Read the professional manual page of the tool
 man kchangelog
 ```
@@ -133,6 +146,33 @@ kchangelog --list-subs
 
 # Unsubscribe from a series
 kchangelog --unsubscribe 6.8
+```
+
+---
+
+## JSON Output Schema
+
+When running with `--json`, `kchangelog` parses raw changelogs into a standard JSON schema:
+
+```json
+[
+  {
+    "package": "linux-hwe-6.17",
+    "version": "6.17.0-23.23~24.04.1",
+    "urgency": "medium",
+    "author": "Stefan Bader <stefan.bader@canonical.com>",
+    "date": "Tue, 14 Apr 2026 16:36:31 +0200",
+    "cves": [
+      "CVE-2026-23231",
+      "CVE-2026-23209",
+      "CVE-2026-23112"
+    ],
+    "changes": [
+      "noble/linux-hwe-6.17: 6.17.0-23.23~24.04.1 -proposed tracker (LP: #2147918)",
+      "macvlan: observe an RCU grace period in macvlan_common_newlink() error path (LP: #2144380) // CVE-2026-23209"
+    ]
+  }
+]
 ```
 
 ---

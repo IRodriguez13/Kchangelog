@@ -1,0 +1,38 @@
+#compdef kchangelog
+
+_kchangelog() {
+    local -a opts
+    opts=(
+        '--cve[Show only lines containing CVE identifiers]'
+        '--open[Pipe the changelog into PAGER]'
+        '--diff[Show diff against the last read version]'
+        '--last[Limit output to the last N entries]:lines:(1 3 5 10 20)'
+        '--subscribe[Subscribe to kernel monitoring]:version:->versions'
+        '--unsubscribe[Unsubscribe from kernel monitoring]:version:->versions'
+        '--list-subs[List all current subscriptions]'
+        '--check[Check all active subscriptions now]'
+        '--install-service[Install systemd timer]'
+        '--remove-service[Uninstall systemd timer]'
+        '--list-available[List all available kernel versions]'
+        '--color[Specify when to colorize output]:color:(always never auto)'
+        '--grep[Filter changelog entries by pattern]:pattern:'
+        '--json[Output changelog in structured JSON]'
+        '(-h --help)'{-h,--help}'[Display the help menu]'
+        '(-v --version)'{-v,--version}'[Display version information]'
+    )
+
+    _arguments -s : $opts '*::version:->versions'
+
+    case "$state" in
+        versions)
+            local -a kernels
+            kernels=(${(f)"$(apt-cache pkgnames linux-image- 2>/dev/null | grep -E '^linux-image-[0-9]' | sed -E 's/^linux-image-//; s/-(generic|dbgsym|lowlatency|aws|gcp|azure|oem|oracle|ibm|gke|unsigned)//g' | grep -E '^[0-9]' | sort -V -u)"})
+            if [[ "$words[CURRENT-1]" == "--subscribe" || "$words[CURRENT-1]" == "--unsubscribe" ]]; then
+                kernels=(active $kernels)
+            fi
+            _describe -t versions 'kernel versions' kernels
+            ;;
+    esac
+}
+
+_kchangelog "$@"

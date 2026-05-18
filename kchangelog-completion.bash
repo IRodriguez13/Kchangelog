@@ -5,7 +5,7 @@ _kchangelog() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    opts="--cve --open --diff --last --subscribe --unsubscribe --list-subs --check --install-service --remove-service -h --help -v --version -l --list-available"
+    opts="--cve --open --diff --last --subscribe --unsubscribe --list-subs --check --install-service --remove-service -h --help -v --version -l --list-available --color --grep --json"
 
     case "${prev}" in
         --subscribe|--unsubscribe)
@@ -20,6 +20,10 @@ _kchangelog() {
             ;;
         --last)
             COMPREPLY=( $(compgen -W "1 3 5 10 20 50" -- "${cur}") )
+            return 0
+            ;;
+        --color)
+            COMPREPLY=( $(compgen -W "always never auto" -- "${cur}") )
             return 0
             ;;
     esac

@@ -34,6 +34,15 @@ Pipe the changelog output into the system pager (defaults to \fIless \-R\fR).
 .TP
 .BI \-l\fR, \fB\-\-list\-available
 Retrieve and list all available kernel package versions found in the local APT cache.
+.TP
+.BI \-\-grep " pattern"
+Filter changelog entry blocks by matching a keyword pattern (case-insensitive).
+.TP
+.BI \-\-json
+Format the changelog output as a structured JSON array of objects.
+.TP
+.BI \-\-color " always|never|auto"
+Specify when to apply ANSI terminal colors to output (defaults to \fBauto\fR, which colorizes only when outputting directly to an interactive terminal TTY).
 .SS Subscription Options
 .TP
 .BI \-\-subscribe " version"

@@ -8,6 +8,8 @@ BINDIR = $(PREFIX)/bin
 SCRIPT = kchangelog
 MANDIR ?= $(PREFIX)/share/man/man1
 BASH_COMP_DIR ?= /usr/share/bash-completion/completions
+ZSH_COMP_DIR ?= $(PREFIX)/share/zsh/site-functions
+FISH_COMP_DIR ?= $(PREFIX)/share/fish/vendor_completions.d
 
 # Rutas de Systemd del usuario
 SYSTEMD_USER_DIR = $(HOME)/.config/systemd/user
@@ -34,6 +36,9 @@ check-flags:
 	@bash ./$(SCRIPT) --help > /dev/null || (echo "Error: La flag --help no está funcional" && exit 1)
 	@bash ./$(SCRIPT) --list-subs > /dev/null || (echo "Error: La flag --list-subs no está funcional" && exit 1)
 	@bash ./$(SCRIPT) --list-available > /dev/null || (echo "Error: La flag --list-available no está funcional" && exit 1)
+	@bash ./$(SCRIPT) --color=never --version > /dev/null || (echo "Error: La flag --color no está funcional" && exit 1)
+	@bash ./$(SCRIPT) --grep="test" --version > /dev/null || (echo "Error: La flag --grep no está funcional" && exit 1)
+	@bash ./$(SCRIPT) --json --version > /dev/null || (echo "Error: La flag --json no está funcional" && exit 1)
 	@echo "✓ Todas las flags se verificaron y están 100% funcionales."
 
 # 2. Prueba de notificaciones de escritorio
@@ -69,11 +74,21 @@ install-script: check-flags
 	cp $(SCRIPT).1 $(DESTDIR)$(MANDIR)/$(SCRIPT).1
 	chmod 644 $(DESTDIR)$(MANDIR)/$(SCRIPT).1
 	@echo "✓ Manpage kchangelog.1 instalada en $(DESTDIR)$(MANDIR)/$(SCRIPT).1."
-	@echo "Instalando autocompletado en $(DESTDIR)$(BASH_COMP_DIR)..."
+	@echo "Instalando autocompletado de Bash en $(DESTDIR)$(BASH_COMP_DIR)..."
 	mkdir -p $(DESTDIR)$(BASH_COMP_DIR)
 	cp $(SCRIPT)-completion.bash $(DESTDIR)$(BASH_COMP_DIR)/$(SCRIPT)
 	chmod 644 $(DESTDIR)$(BASH_COMP_DIR)/$(SCRIPT)
-	@echo "✓ Autocompletado de Bash instalado en $(DESTDIR)$(BASH_COMP_DIR)/$(SCRIPT)."
+	@echo "✓ Autocompletado de Bash instalado."
+	@echo "Instalando autocompletado de Zsh en $(DESTDIR)$(ZSH_COMP_DIR)..."
+	mkdir -p $(DESTDIR)$(ZSH_COMP_DIR)
+	cp _$(SCRIPT) $(DESTDIR)$(ZSH_COMP_DIR)/_$(SCRIPT)
+	chmod 644 $(DESTDIR)$(ZSH_COMP_DIR)/_$(SCRIPT)
+	@echo "✓ Autocompletado de Zsh instalado."
+	@echo "Instalando autocompletado de Fish en $(DESTDIR)$(FISH_COMP_DIR)..."
+	mkdir -p $(DESTDIR)$(FISH_COMP_DIR)
+	cp $(SCRIPT).fish $(DESTDIR)$(FISH_COMP_DIR)/$(SCRIPT).fish
+	chmod 644 $(DESTDIR)$(FISH_COMP_DIR)/$(SCRIPT).fish
+	@echo "✓ Autocompletado de Fish instalado."
 
 # 3. Instalación del Servicio Systemd
 install-service:
@@ -113,9 +128,11 @@ uninstall-script:
 	@echo "Eliminando manpage de $(DESTDIR)$(MANDIR)..."
 	rm -f $(DESTDIR)$(MANDIR)/$(SCRIPT).1
 	@echo "✓ Manpage desinstalada."
-	@echo "Eliminando autocompletado de $(DESTDIR)$(BASH_COMP_DIR)..."
+	@echo "Eliminando autocompletados..."
 	rm -f $(DESTDIR)$(BASH_COMP_DIR)/$(SCRIPT)
-	@echo "✓ Autocompletado desinstalado."
+	rm -f $(DESTDIR)$(ZSH_COMP_DIR)/_$(SCRIPT)
+	rm -f $(DESTDIR)$(FISH_COMP_DIR)/$(SCRIPT).fish
+	@echo "✓ Autocompletados desinstalados."
 
 # 6. Desinstalación del Servicio Systemd
 uninstall-service:

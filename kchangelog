@@ -64,6 +64,8 @@ LECTURA:
   kchangelog --last N           Últimas N entradas
   kchangelog --diff             Diff contra última lectura guardada
   kchangelog --open             Abrir en $PAGER
+  kchangelog --grep PATTERN     Filtrar entradas que contengan PATTERN
+  kchangelog --json             Salida formateada en JSON estructurado
 
 SUSCRIPCIONES:
   kchangelog --subscribe active      Kernel activo
@@ -78,6 +80,7 @@ SERVICIO:
 
 OTRAS OPCIONES:
   -l, --list-available               Listar todos los kernels disponibles
+  --color always|never|auto          Habilitar/deshabilitar colores (defecto: auto)
   -v, --version                      Mostrar información de versión y salir
   -h, --help                         Mostrar esta ayuda y salir
 
@@ -187,6 +190,167 @@ filter_last_n() {
         /^ -- / { count++ }
         { print }
         count >= n { exit }
+    '
+}
+
+filter_grep() {
+    local pattern="$1"
+    awk -v pat="$pattern" '
+        BEGIN { IGNORECASE = 1 }
+        /^linux/ {
+            if (block != "") {
+                if (block ~ pat) printf "%s", block
+            }
+            block = $0 "\n"
+            next
+        }
+        { block = block $0 "\n" }
+        /^ -- / {
+            if (block ~ pat) printf "%s", block
+            block = ""
+        }
+        END {
+            if (block != "" && block ~ pat) printf "%s", block
+        }
+    '
+}
+
+to_json() {
+    awk '
+        BEGIN {
+            print "["
+            first_entry = 1
+            first_block = 1
+        }
+        
+        /^linux/ {
+            if (!first_entry) {
+                print_entry()
+            }
+            first_entry = 0
+            
+            pkg = $1
+            # Extraer versión dentro de paréntesis
+            match($0, /\([^)]+\)/)
+            ver = (RLENGTH > 0) ? substr($0, RSTART + 1, RLENGTH - 2) : "unknown"
+            
+            # Extraer urgencia
+            match($0, /urgency=[a-zA-Z0-9_-]+/)
+            urg = (RLENGTH > 0) ? substr($0, RSTART + 8, RLENGTH - 8) : "unknown"
+            
+            changes_count = 0
+            cve_count = 0
+            delete changes
+            delete cves
+            delete cve_seen
+            next
+        }
+        
+        /^ -- / {
+            # Extraer autor y fecha
+            sig = substr($0, 5)
+            # Buscar la fecha (comienza después de dos espacios consecutivos)
+            match(sig, /  [^ ]+/)
+            if (RLENGTH > 0) {
+                author = substr(sig, 1, RSTART - 1)
+                date = substr(sig, RSTART + 2)
+            } else {
+                author = sig
+                date = ""
+            }
+            # Limpiar comillas para JSON válido
+            gsub(/"/, "\\\"", author)
+            gsub(/"/, "\\\"", date)
+            next
+        }
+        
+        # Líneas de cambios (iniciadas con espacios)
+        /^[ ]+[^ ]/ {
+            line = $0
+            # Trim de espacios al inicio/fin
+            gsub(/^[ \t]+|[ \t]+$/, "", line)
+            gsub(/"/, "\\\"", line)
+            changes[changes_count++] = line
+            
+            # Buscar CVEs
+            str = $0
+            while (match(str, /CVE-[0-9]{4}-[0-9]+/)) {
+                cve = substr(str, RSTART, RLENGTH)
+                if (!cve_seen[cve]) {
+                    cves[cve_count++] = cve
+                    cve_seen[cve] = 1
+                }
+                str = substr(str, RSTART + RLENGTH)
+            }
+        }
+        
+        function print_entry() {
+            if (!first_block) printf ",\n"
+            first_block = 0
+            
+            printf "  {\n"
+            printf "    \"package\": \"%s\",\n", pkg
+            printf "    \"version\": \"%s\",\n", ver
+            printf "    \"urgency\": \"%s\",\n", urg
+            printf "    \"author\": \"%s\",\n", author
+            printf "    \"date\": \"%s\",\n", date
+            
+            # Imprimir CVEs
+            printf "    \"cves\": ["
+            for (i = 0; i < cve_count; i++) {
+                printf "\"%s\"", cves[i]
+                if (i < cve_count - 1) printf ", "
+            }
+            printf "],\n"
+            
+            # Imprimir cambios
+            printf "    \"changes\": [\n"
+            for (i = 0; i < changes_count; i++) {
+                printf "      \"%s\"", changes[i]
+                if (i < changes_count - 1) printf ",\n"
+                else printf "\n"
+            }
+            printf "    ]\n"
+            printf "  }"
+        }
+        
+        END {
+            if (!first_entry) {
+                print_entry()
+                printf "\n"
+            }
+            print "]"
+        }
+    '
+}
+
+colorize() {
+    if [[ $USE_COLOR -eq 0 ]]; then
+        cat
+        return
+    fi
+    awk '
+        # Cabecera de paquete
+        /^linux[a-z0-9_-]* \([0-9]/ {
+            print "\033[1;36m" $0 "\033[0m"
+            next
+        }
+        # Firma de autor
+        /^ -- / {
+            print "\033[90m" $0 "\033[0m"
+            next
+        }
+        # Línea estándar
+        {
+            line = $0
+            # Resaltar CVEs en rojo
+            gsub(/CVE-[0-9]{4}-[0-9]+/, "\033[1;31m&\033[0m", line)
+            # Resaltar urgencia alta/crítica en amarillo
+            gsub(/urgency=(high|critical)/, "\033[1;33m&\033[0m", line)
+            # Resaltar urgencia media/baja en verde
+            gsub(/urgency=(medium|low)/, "\033[1;32m&\033[0m", line)
+            print line
+        }
     '
 }
 
@@ -376,17 +540,22 @@ remove_service() {
 # --- Pipeline de salida ---
 run_pipeline() {
     local out_file="$1"
-    local content
-    content=$(cat "$out_file")
 
-    [[ $CVE_ONLY -eq 1 ]] && content=$(echo "$content" | filter_cve)
-    [[ $LAST_N -gt 0 ]]   && content=$(echo "$content" | filter_last_n "$LAST_N")
+    local cmd="cat \"$out_file\""
+    [[ $CVE_ONLY -eq 1 ]]      && cmd="$cmd | filter_cve"
+    [[ -n "$GREP_PATTERN" ]]   && cmd="$cmd | filter_grep \"$GREP_PATTERN\""
+    [[ $LAST_N -gt 0 ]]        && cmd="$cmd | filter_last_n \"$LAST_N\""
+    [[ $JSON_OUTPUT -eq 1 ]]   && cmd="$cmd | to_json"
+    [[ $JSON_OUTPUT -eq 0 ]]   && cmd="$cmd | colorize"
 
+    # Deshabilitar pipefail temporalmente para permitir terminación temprana del pipeline (SIGPIPE)
+    set +o pipefail
     if [[ $OPEN_PAGER -eq 1 ]]; then
-        echo "$content" | ${PAGER:-less -R}
+        eval "$cmd" | ${PAGER:-less -R}
     else
-        echo "$content"
+        eval "$cmd"
     fi
+    set -o pipefail
 }
 
 # --- Parse de argumentos ---
@@ -396,6 +565,9 @@ OPEN_PAGER=0
 DO_DIFF=0
 TARGET_VER=""
 ACTION="read"
+COLOR_OPT="auto"
+GREP_PATTERN=""
+JSON_OUTPUT=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -410,6 +582,11 @@ while [[ $# -gt 0 ]]; do
         --install-service) ACTION="install-service" ;;
         --remove-service)  ACTION="remove-service" ;;
         -l|--list-available) ACTION="list-available" ;;
+        --color)           shift; COLOR_OPT="${1:?'--color requiere: always, never o auto'}" ;;
+        --color=*)         COLOR_OPT="${1#*=}" ;;
+        --grep)            shift; GREP_PATTERN="${1:?'--grep requiere un patrón'}" ;;
+        --grep=*)          GREP_PATTERN="${1#*=}" ;;
+        --json)            JSON_OUTPUT=1 ;;
         -h|--help)         usage ;;
         -v|--version)      show_version ;;
         -*)                err "Opción desconocida: $1"; exit 1 ;;
@@ -417,6 +594,16 @@ while [[ $# -gt 0 ]]; do
     esac
     shift
 done
+
+# Configuración de colores
+USE_COLOR=0
+if [[ "$COLOR_OPT" == "always" ]]; then
+    USE_COLOR=1
+elif [[ "$COLOR_OPT" == "auto" ]]; then
+    if [[ -t 1 ]]; then
+        USE_COLOR=1
+    fi
+fi
 
 # --- Dispatch ---
 case "$ACTION" in
