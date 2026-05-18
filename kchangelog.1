@@ -1,0 +1,95 @@
+.TH KCHANGELOG 1 "May 2026" "kchangelog 1.0.0" "User Commands"
+.SH NAME
+kchangelog \- monitor Ubuntu kernel changelogs with desktop notifications
+.SH SYNOPSIS
+.B kchangelog
+[\fIversion\fR] [\fIoptions\fR]
+.br
+.B kchangelog
+.B \-\-subscribe
+.I version
+.br
+.B kchangelog
+.B \-\-unsubscribe
+.I version
+.SH DESCRIPTION
+.B kchangelog
+downloads and monitors Ubuntu kernel changelogs directly from Ubuntu servers. It helps users track security fixes (CVEs) and new package version releases. It can run interactively in the terminal or persistently via a background systemd user timer.
+.PP
+If no kernel version is specified, it defaults to the active running kernel version (obtained via `uname -r`).
+.SH OPTIONS
+.SS Query Options
+.TP
+.BI \-\-cve
+Filter the changelog output to show only sections that contain CVE identifiers.
+.TP
+.BI \-\-last " N"
+Limit the output to the last \fIN\fR changelog entries.
+.TP
+.BI \-\-diff
+Compare the downloaded changelog against the last saved baseline version in \fI~/.config/kchangelog/seen/\fR. Offers to update the baseline.
+.TP
+.BI \-\-open
+Pipe the changelog output into the system pager (defaults to \fIless \-R\fR).
+.TP
+.BI \-l\fR, \fB\-\-list\-available
+Retrieve and list all available kernel package versions found in the local APT cache.
+.SS Subscription Options
+.TP
+.BI \-\-subscribe " version"
+Subscribe to background changelog monitoring for a specific kernel version or \fBactive\fR to track the running kernel.
+.TP
+.BI \-\-unsubscribe " version"
+Unsubscribe from background monitoring for a specific kernel version.
+.TP
+.BI \-\-list\-subs
+List all current active subscriptions.
+.SS Service & Admin Options
+.TP
+.BI \-\-check
+Check all active subscriptions now (used by the background systemd timer).
+.TP
+.BI \-\-install\-service
+Install and register the systemd user service and timer for background periodic checking (runs every 6 hours).
+.TP
+.BI \-\-remove\-service
+Uninstall and clean up the systemd user service and timer.
+.TP
+.BI \-h\fR, \fB\-\-help
+Display the help menu and exit.
+.TP
+.BI \-v\fR, \fB\-\-version
+Display version and copyright information and exit.
+.SH FILES
+.TP
+.I ~/.config/kchangelog/subscriptions
+A plain text file containing one kernel version string per line representing the active subscriptions.
+.TP
+.I ~/.config/kchangelog/seen/
+Directory containing baseline changelog files used for diff comparisons.
+.TP
+.I ~/.config/systemd/user/kchangelog.service
+The systemd user service unit.
+.TP
+.I ~/.config/systemd/user/kchangelog.timer
+The systemd user timer unit running every 6 hours.
+.SH EXAMPLES
+Query the changelog for the active kernel:
+.IP
+.B kchangelog
+.PP
+Show only CVE entries in the last 3 releases of kernel 6.8:
+.IP
+.B kchangelog 6.8 --cve --last 3
+.PP
+Subscribe to the active kernel:
+.IP
+.B kchangelog --subscribe active
+.PP
+List all available kernels for monitoring:
+.IP
+.B kchangelog --list-available
+.SH AUTHOR
+Written by Ivan Ezequiel Rodriguez.
+.SH LICENSE
+Licensed under GNU GPL version 3 or later.

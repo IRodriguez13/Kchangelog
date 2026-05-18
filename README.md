@@ -26,8 +26,11 @@ Although originally tested on Cinnamon, `kchangelog` uses the universal `notify-
 *   **Smart Resolution:** Automatically translates short kernel versions (e.g., `6.8` or active kernel) to exact package release versions via `apt-cache`.
 *   **Granular Filters:** Filter by security vulnerabilities (`--cve`) or limit entries (`--last N`).
 *   **Local Diffs:** Easily compare updates against the last read version (`--diff`).
+*   **Kernel Version Listing:** Instantly retrieve, clean, and format all available kernel package versions in the local cache (`--list-available`).
 *   **Subscription System:** Subscribe to multiple kernel releases (e.g., LTS kernels or active running kernels).
 *   **Systemd Integration:** Seamless background scheduling via systemd user timers (running every 6 hours by default) with custom DBus environment mapping for reliable notifications.
+*   **Interactive Autocompletion:** Provides tab-completion in Bash for all commands, options, and dynamically suggests available kernel versions.
+*   **Professional Manpage:** Complete UNIX standard manual page (`man kchangelog`) explaining all commands, configuration files, and options.
 
 ---
 
@@ -43,11 +46,11 @@ Although originally tested on Cinnamon, `kchangelog` uses the universal `notify-
 
 ## Installation & Setup
 
-We provide a comprehensive `Makefile` to handle script validation, installation, and service deployment.
+We provide a comprehensive `Makefile` to handle script validation, installation, shell completion configuration, manpage registration, and service deployment.
 
-### 1. Complete Installation (Script + Systemd Service)
+### 1. Complete Installation (Script + Shell Completion + Manpage + Systemd Service)
 
-Installs the executable globally and automatically registers/enables the user timer service:
+Installs the executable globally, registers the bash autocompleter, installs the manpage, and automatically registers/enables the user timer service:
 ```bash
 sudo make install
 ```
@@ -108,6 +111,12 @@ kchangelog --diff
 
 # Open changelog directly inside your system $PAGER
 kchangelog --open
+
+# List all available kernel package versions in multiple columns
+kchangelog --list-available
+
+# Read the professional manual page of the tool
+man kchangelog
 ```
 
 ### Subscription Management

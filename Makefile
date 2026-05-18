@@ -6,6 +6,8 @@
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 SCRIPT = kchangelog
+MANDIR ?= $(PREFIX)/share/man/man1
+BASH_COMP_DIR ?= /usr/share/bash-completion/completions
 
 # Rutas de Systemd del usuario
 SYSTEMD_USER_DIR = $(HOME)/.config/systemd/user
@@ -31,6 +33,7 @@ check-flags:
 	@bash ./$(SCRIPT) --version > /dev/null || (echo "Error: La flag --version no está funcional" && exit 1)
 	@bash ./$(SCRIPT) --help > /dev/null || (echo "Error: La flag --help no está funcional" && exit 1)
 	@bash ./$(SCRIPT) --list-subs > /dev/null || (echo "Error: La flag --list-subs no está funcional" && exit 1)
+	@bash ./$(SCRIPT) --list-available > /dev/null || (echo "Error: La flag --list-available no está funcional" && exit 1)
 	@echo "✓ Todas las flags se verificaron y están 100% funcionales."
 
 # 2. Prueba de notificaciones de escritorio
@@ -61,6 +64,16 @@ install-script: check-flags
 	cp $(SCRIPT) $(DESTDIR)$(BINDIR)/$(SCRIPT)
 	chmod 755 $(DESTDIR)$(BINDIR)/$(SCRIPT)
 	@echo "✓ Script kchangelog instalado correctamente en $(DESTDIR)$(BINDIR)/$(SCRIPT)."
+	@echo "Instalando manpage en $(DESTDIR)$(MANDIR)..."
+	mkdir -p $(DESTDIR)$(MANDIR)
+	cp $(SCRIPT).1 $(DESTDIR)$(MANDIR)/$(SCRIPT).1
+	chmod 644 $(DESTDIR)$(MANDIR)/$(SCRIPT).1
+	@echo "✓ Manpage kchangelog.1 instalada en $(DESTDIR)$(MANDIR)/$(SCRIPT).1."
+	@echo "Instalando autocompletado en $(DESTDIR)$(BASH_COMP_DIR)..."
+	mkdir -p $(DESTDIR)$(BASH_COMP_DIR)
+	cp $(SCRIPT)-completion.bash $(DESTDIR)$(BASH_COMP_DIR)/$(SCRIPT)
+	chmod 644 $(DESTDIR)$(BASH_COMP_DIR)/$(SCRIPT)
+	@echo "✓ Autocompletado de Bash instalado en $(DESTDIR)$(BASH_COMP_DIR)/$(SCRIPT)."
 
 # 3. Instalación del Servicio Systemd
 install-service:
@@ -97,6 +110,12 @@ uninstall-script:
 	@echo "Eliminando script de $(DESTDIR)$(BINDIR)..."
 	rm -f $(DESTDIR)$(BINDIR)/$(SCRIPT)
 	@echo "✓ Script desinstalado de $(DESTDIR)$(BINDIR)/$(SCRIPT)."
+	@echo "Eliminando manpage de $(DESTDIR)$(MANDIR)..."
+	rm -f $(DESTDIR)$(MANDIR)/$(SCRIPT).1
+	@echo "✓ Manpage desinstalada."
+	@echo "Eliminando autocompletado de $(DESTDIR)$(BASH_COMP_DIR)..."
+	rm -f $(DESTDIR)$(BASH_COMP_DIR)/$(SCRIPT)
+	@echo "✓ Autocompletado desinstalado."
 
 # 6. Desinstalación del Servicio Systemd
 uninstall-service:
